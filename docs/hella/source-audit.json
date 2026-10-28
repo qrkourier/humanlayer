@@ -1,0 +1,25 @@
+{
+  "review_date": "2026-10-27",
+  "upstream": "https://github.com/humanlayer/humanlayer",
+  "revision": "0dbe4f58f0df9e337783defb2928e8ab18b88725",
+  "cli_version": "0.40.0",
+  "decision": "STOP_COMPATIBILITY",
+  "deployment_permitted": false,
+  "files": {
+    "docker-compose.yaml": "107925dfb7800f81193d52a569546d597804299340f7affad3b5bc069d3a23a4",
+    "apps/cli/package.json": "249dc7d01c3a144513b1679d13fa9252ea85681519f23448a2163be06cc0d55a",
+    "apps/cli/src/auth/workos-device-auth.ts": "af36a32e3748e8247af235271614a056c13046ac13ef24d667501d1370c0c833",
+    "apps/cli/src/commands/self-update-capability.ts": "d4455d7f828f14aec0f5d95a04836bf5c3414f07be113b4e550f17eb41e92237",
+    "apps/riptide-ui/src/integrations/workos/AuthProvider.tsx": "fbc7be83ecddb1963658a6ee84d8fbd5fd3ef207aa9544a5bf980145e7eaf535",
+    "apps/riptide-api/src/effects/services/workos/workos.service.ts": "bff5f213aecc9e4697ddbb16277fdd172adf73458e48a9156606fa7563395024",
+    "apps/riptide-api/src/auth/personal-access-tokens.ts": "ea70e8c691d8baaccfc88e8f80d8ef70dd4e29fa574a721b2a48454526e4f68f",
+    "apps/riptide-api/src/auth/jwt-validator.ts": "11eaeb45c83e2f5ba0052e6aff3d721a79155b8e911c6287077facd365addb9f",
+    "apps/riptide-electric-proxy/src/auth/effect/workos.service.ts": "bbfec66b7ef157cabaadb8f55c3d63941686b1fe4211d9006fa8e0371999f369",
+    "apps/riptide-electric-proxy/src/auth/effect/jwt-validator.service.ts": "2c2cda7ed95471a0747f41f5bcbdab898a83db2cd2c7646f5bff0cdc875c6dbe",
+    "packages/schemas/src/effect/workos-access-token.ts": "132ecf4e27349663055b29b17a89a0b81db18f0c73a4126e396c257b20636066",
+    "apps/riptide-daemon/src/agents/codelayer/execute-codelayer.ts": "bd672e00c7b635c21222abc759b726d74df96d4013e41b77c624d0f10882fade",
+    "apps/riptide-daemon/src/effects/services/fold-sessions/fold-model-selection.ts": "ac108b03318cd333477cc755999604ff9a8170345dd761970329065cee413c8e",
+    "packages/ai/src/config/index.ts": "ed6fe94ad4a4a3530f4caa1c9302b8ed346eab439781d986e2ae3064b1decd98",
+    "apps/devstack/src/lib/env-block.ts": "c837a20b75a16c37555f8e596e80308134ba4b35c35dee756c1d9a8591a35f80"
+  }
+}
