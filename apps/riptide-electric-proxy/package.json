@@ -26,7 +26,6 @@
     "@sentry/core": "catalog:",
     "@sentry/effect": "catalog:",
     "@sentry/node": "catalog:",
-    "@workos-inc/node": "^7.77.0",
     "buffer": "6.0.3",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
