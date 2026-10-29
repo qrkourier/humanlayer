@@ -19,6 +19,12 @@ and runtime-specific configuration so it can be contributed without Hella policy
 
 ## Workstream
 
+- [Server scope and replacement assessment](server-rewrite-assessment.md):
+  selective self-hosted composition versus a full rewrite, with the existing
+  UI/CLI/daemon as the compatibility target.
+- [SDK compatibility scope](sdk-compatibility-scope.md): consumer protocols and
+  the distinction between login adapter changes and unchanged binaries.
+
 - [Self-hosted design](self-hosted-oidc-proposal.md): complete local collaboration
   and access management with generic OIDC login, excluding commercial behavior.
 - [Contribution discussion](contribution-discussion.md): candidate upstream scope,
