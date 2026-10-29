@@ -8,8 +8,6 @@ describe('JWKSConfig', () => {
 	// Create a test layer for WorkosConfig (JWKSConfig's dependency)
 	const WorkosConfigTest = Layer.succeed(WorkosConfig, {
 		workosClientId: 'test_client_id',
-		workosRedirectUri: 'http://test.local/callback',
-		workos: {} as any,
 		jwksUrl: 'https://api.workos.com/sso/jwks/test_client_id',
 	})
 
@@ -31,8 +29,6 @@ describe('JWKSConfig', () => {
 			// Create a different WorkosConfig to verify JWKSConfig uses it
 			const CustomWorkosConfig = Layer.succeed(WorkosConfig, {
 				workosClientId: 'custom_client',
-				workosRedirectUri: 'http://custom.local/callback',
-				workos: {} as any,
 				jwksUrl: 'https://custom.workos.com/jwks',
 			})
 

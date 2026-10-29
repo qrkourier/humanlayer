@@ -7,19 +7,28 @@ import { EnvironmentVariableNotFoundError } from '../../src/lib/effect/environme
 describe('WorkosConfig', () => {
 	const values = {
 		WORKOS_CLIENT_ID: 'client_test123',
-		WORKOS_REDIRECT_URI: 'http://localhost:3000/callback',
-		WORKOS_API_KEY: 'sk_test_abc123',
 	}
 	const loadConfig = WorkosConfig.pipe(Effect.provide(WorkosConfigLive))
 
-	it.effect('builds the live SDK and JWKS URL from scoped configuration', ({ expect }) =>
+	it.effect('builds public JWKS configuration without an API key or redirect URI', ({ expect }) =>
 		Effect.gen(function* () {
 			const config = yield* loadConfig
 			expect(config.workosClientId).toBe(values.WORKOS_CLIENT_ID)
-			expect(config.workosRedirectUri).toBe(values.WORKOS_REDIRECT_URI)
-			expect(config.workos).toBeDefined()
 			expect(config.jwksUrl).toBe('https://api.workos.com/sso/jwks/client_test123')
 		}).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(values)))),
+	)
+
+	it.effect('keeps client IDs within one public JWKS path segment', ({ expect }) =>
+		Effect.gen(function* () {
+			const config = yield* loadConfig
+			expect(config.jwksUrl).toBe('https://api.workos.com/sso/jwks/client%2Fother%3Fkey%3Dvalue%23fragment')
+		}).pipe(
+			Effect.provide(
+				ConfigProvider.layer(
+					ConfigProvider.fromUnknown({ WORKOS_CLIENT_ID: 'client/other?key=value#fragment' }),
+				),
+			),
+		),
 	)
 
 	for (const variableName of Object.keys(values)) {
@@ -46,8 +55,6 @@ describe('WorkosConfig', () => {
 							ConfigProvider.layer(
 								ConfigProvider.fromUnknown({
 									WORKOS_CLIENT_ID: `client_${name}`,
-									WORKOS_REDIRECT_URI: `https://${name}.test/callback`,
-									WORKOS_API_KEY: `sk_test_${name}`,
 								}),
 							),
 						),
@@ -56,10 +63,7 @@ describe('WorkosConfig', () => {
 				{ concurrency: 'unbounded' },
 			)
 			expect(configs.map((config) => config.workosClientId)).toEqual(['client_first', 'client_second'])
-			expect(configs.map((config) => config.workosRedirectUri)).toEqual([
-				'https://first.test/callback',
-				'https://second.test/callback',
-			])
+
 			expect(configs.map((config) => config.jwksUrl)).toEqual([
 				'https://api.workos.com/sso/jwks/client_first',
 				'https://api.workos.com/sso/jwks/client_second',
