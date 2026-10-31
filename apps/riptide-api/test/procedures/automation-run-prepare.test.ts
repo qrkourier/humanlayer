@@ -50,12 +50,16 @@ describe('automation.run.prepare', () => {
 		await cleanup?.()
 	}, 30_000)
 
-	function context(actorUserId = userId) {
+	function context(
+		actorUserId = userId,
+		actorOrganizationId = organizationId,
+		workosOrganizationId = 'workos-automation-test',
+	) {
 		return createMockApiContext({
 			auth: createMockApiAuth({
 				userId: actorUserId,
-				organizationId,
-				workosOrganizationId: 'workos-automation-test',
+				organizationId: actorOrganizationId,
+				workosOrganizationId,
 			}),
 			services: { db, dbReadReplica: db },
 		})
@@ -161,6 +165,27 @@ describe('automation.run.prepare', () => {
 		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
 
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+	})
+
+	test('reusing a session ID from another organization does not reveal the prior receipt', async () => {
+		const request = { ...ensureInput(`cross-org-${randomUUID()}`, 'Tenant-scoped run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+		const [otherOrganization] = await db
+			.insert(organizations)
+			.values({ name: 'Other automation test', workos_organization_id: `workos-${randomUUID()}` })
+			.returning()
+		if (!otherOrganization) throw new Error('Failed to create other test organization')
+
+		await expect(
+			call(automationRunPrepareProcedure, request, {
+				context: context(userId, otherOrganization.id, otherOrganization.workos_organization_id),
+			}),
+		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
 	})
 
 	test('creates the initial event atomically', async () => {
