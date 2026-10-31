@@ -6,7 +6,8 @@ import { sessions } from './sessions'
 
 /**
  * Private replay records for caller-keyed automation session preparation.
- * This table is deliberately excluded from applicationTables and Electric sync.
+ * This table is excluded from the test-fixture application table registry and
+ * is not exposed by the current client-facing Electric proxy routes.
  */
 export const automationRunPreparations = pgTable(
 	'automation_run_preparations',
