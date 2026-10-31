@@ -128,6 +128,12 @@ describe('automation.run.prepare API route', () => {
 
 		expect(apiKeyValidationCalls).toBe(4)
 		expect(await db.select().from(sessions).where(eq(sessions.id, unauthenticatedInput.sessionId))).toHaveLength(0)
+		expect(
+			await db
+				.select()
+				.from(conversationEvents)
+				.where(eq(conversationEvents.session_id, unauthenticatedInput.sessionId)),
+		).toHaveLength(0)
 		expect(await db.select().from(sessions).where(eq(sessions.id, input.sessionId))).toHaveLength(1)
 		expect(
 			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, input.sessionId)),
