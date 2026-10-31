@@ -3,15 +3,18 @@ import { randomUUID } from 'node:crypto'
 import { conversationEvents } from '@humanlayer/db/tables/conversation-events'
 import { organizations } from '@humanlayer/db/tables/organizations'
 import { sessions } from '@humanlayer/db/tables/sessions'
+import type { ApiKey } from '@workos-inc/node'
 import { eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
+import { Effect, Layer } from 'effect'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 
-import { createMockApiAuth, createMockStripeService, createMockWorkosService } from '../mocks'
-import { createRuntimeWithTestPostgresLayer } from '../utils/effect-procedure-test-runtime'
+import { WorkosService } from '../../src/effects/services/workos/workos.service'
+import { createMockStripeService, createMockWorkosService } from '../mocks'
+import type { createApp } from '../test-factory'
+import { createRuntimeWithTestPostgresLayer, makeTestWorkosService } from '../utils/effect-procedure-test-runtime'
 import { requireExternalTestServices } from '../utils/external-test-services'
 import { createTestDb } from '../utils/test-db'
-import type { createApp } from '../test-factory'
 
 await requireExternalTestServices()
 
@@ -23,6 +26,8 @@ describe('automation.run.prepare API route', () => {
 	let organizationId: string
 	const userId = 'automation-http-user'
 	const workosOrganizationId = `workos-automation-http-${randomUUID()}`
+	const syntheticPat = 'automation_http_test_pat'
+	let apiKeyValidationCalls = 0
 
 	beforeAll(async () => {
 		const testDb = await createTestDb('automation_prepare_http')
@@ -35,7 +40,27 @@ describe('automation.run.prepare API route', () => {
 		if (!organization) throw new Error('Failed to create HTTP test organization')
 		organizationId = organization.id
 
-		const runtime = createRuntimeWithTestPostgresLayer(db)
+		const userApiKey = {
+			object: 'api_key',
+			id: 'automation-http-key',
+			name: 'Automation HTTP test',
+			owner: { type: 'user', id: userId, organizationId: workosOrganizationId },
+			obfuscatedValue: 'sk_...test',
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			expiresAt: new Date(Date.now() + 60_000).toISOString(),
+			lastUsedAt: null,
+			permissions: [],
+		} as unknown as ApiKey
+		const workosService = makeTestWorkosService({
+			validateApiKey: ({ value }) => {
+				apiKeyValidationCalls += 1
+				return Effect.succeed(value === syntheticPat ? userApiKey : null)
+			},
+		})
+		const runtime = createRuntimeWithTestPostgresLayer(db, {
+			workos: Layer.succeed(WorkosService, workosService),
+		})
 		effectRuntime = runtime
 		vi.doMock('../../src/effects/app-runtime', () => ({ appRuntime: runtime }))
 		const { createApp } = await import('../test-factory')
@@ -44,7 +69,6 @@ describe('automation.run.prepare API route', () => {
 			workos: createMockWorkosService(),
 			stripe: createMockStripeService(),
 			effectRuntime: runtime,
-			testApiAuth: createMockApiAuth({ userId, organizationId, workosOrganizationId }),
 		})
 	}, 60_000)
 
@@ -76,7 +100,10 @@ describe('automation.run.prepare API route', () => {
 		async function request(input: ReturnType<typeof ensureInput>) {
 			return app!.request('/rpc/api/v1/automation/run/prepare', {
 				method: 'POST',
-				headers: { 'content-type': 'application/json' },
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${syntheticPat}`,
+				},
 				body: JSON.stringify(input),
 			})
 		}
@@ -94,6 +121,7 @@ describe('automation.run.prepare API route', () => {
 		expect(conflictResponse.status).toBe(409)
 		expect(await conflictResponse.json()).toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
 
+		expect(apiKeyValidationCalls).toBe(3)
 		expect(await db.select().from(sessions).where(eq(sessions.id, input.sessionId))).toHaveLength(1)
 		expect(
 			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, input.sessionId)),
