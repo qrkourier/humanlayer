@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { automationRunPreparations } from '@humanlayer/db/tables/automation-run-preparations'
 import { conversationEvents } from '@humanlayer/db/tables/conversation-events'
 import { organizations } from '@humanlayer/db/tables/organizations'
 import { sessions } from '@humanlayer/db/tables/sessions'
@@ -113,6 +114,46 @@ describe('automation.run.prepare', () => {
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
 		expect(
 			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('deleting a prepared session removes its replay record and permits exact re-prepare', async () => {
+		const request = {
+			...ensureInput(`delete-replay-${randomUUID()}`, 'Replay after session deletion'),
+			sessionId: randomUUID(),
+		}
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(1)
+
+		await db.delete(sessions).where(eq(sessions.id, first.sessionId))
+
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(0)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(0)
+
+		const replay = await call(automationRunPrepareProcedure, request, { context: context() })
+		expect(replay).toEqual(first)
+		expect(await db.select().from(sessions).where(eq(sessions.id, first.sessionId))).toHaveLength(1)
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
 		).toHaveLength(1)
 	})
 
