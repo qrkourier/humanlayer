@@ -94,15 +94,15 @@ describe('automation.run.prepare API route', () => {
 		}
 	}
 
-	test('concurrent exact HTTP replay returns one receipt and changed input conflicts', async () => {
+	test('authenticates prepare replays and rejects changed or invalid requests', async () => {
 		if (!app) throw new Error('Test Hono API app was not initialized')
 
-		async function request(input: ReturnType<typeof ensureInput>) {
+		async function request(input: ReturnType<typeof ensureInput>, pat = syntheticPat) {
 			return app!.request('/rpc/api/v1/automation/run/prepare', {
 				method: 'POST',
 				headers: {
 					'content-type': 'application/json',
-					authorization: `Bearer ${syntheticPat}`,
+					authorization: `Bearer ${pat}`,
 				},
 				body: JSON.stringify(input),
 			})
@@ -121,7 +121,13 @@ describe('automation.run.prepare API route', () => {
 		expect(conflictResponse.status).toBe(409)
 		expect(await conflictResponse.json()).toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
 
-		expect(apiKeyValidationCalls).toBe(3)
+		const unauthenticatedInput = ensureInput(`unauthenticated-${randomUUID()}`)
+		const unauthenticatedResponse = await request(unauthenticatedInput, 'invalid_prepare_pat')
+		expect(unauthenticatedResponse.status).toBe(401)
+		expect(await unauthenticatedResponse.json()).toMatchObject({ code: 'UNAUTHORIZED' })
+
+		expect(apiKeyValidationCalls).toBe(4)
+		expect(await db.select().from(sessions).where(eq(sessions.id, unauthenticatedInput.sessionId))).toHaveLength(0)
 		expect(await db.select().from(sessions).where(eq(sessions.id, input.sessionId))).toHaveLength(1)
 		expect(
 			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, input.sessionId)),
