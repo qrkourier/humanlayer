@@ -10,8 +10,8 @@
     "dev:node-proxy": "node --env-file=../../.env --watch --import tsx src/index.ts",
     "build": "bun build ./src/index.ts ./src/instrument.mts --outdir ./dist --target node --format esm --sourcemap=linked --minify --entry-naming '[name].mjs'",
     "typecheck": "tsc --noEmit",
-    "test": "bun vitest run",
-    "test:watch": "bun vitest",
+    "test": "node --import tsx ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "node --import tsx ./node_modules/vitest/vitest.mjs",
     "test:llm": "bun run ../../scripts/run-silent.ts 'tests passed' bun run test"
   },
   "dependencies": {
