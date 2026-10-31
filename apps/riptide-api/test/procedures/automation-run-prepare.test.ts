@@ -209,6 +209,29 @@ describe('automation.run.prepare', () => {
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
 	})
 
+	test('concurrent actors cannot recover the same session receipt', async () => {
+		const sessionId = randomUUID()
+		const request = { ...ensureInput(`actor-race-${randomUUID()}`, 'Actor race'), sessionId }
+		const results = await Promise.allSettled([
+			call(automationRunPrepareProcedure, request, { context: context() }),
+			call(automationRunPrepareProcedure, request, { context: context('other-user') }),
+		])
+		const success = results.find((result) => result.status === 'fulfilled')
+		const conflict = results.find((result) => result.status === 'rejected')
+
+		expect(success?.status).toBe('fulfilled')
+		expect(conflict?.status).toBe('rejected')
+		if (success?.status !== 'fulfilled' || conflict?.status !== 'rejected') {
+			throw new Error('Expected one actor to prepare and the other to receive a conflict')
+		}
+		expect(conflict.reason).toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+		expect(success.value.sessionId).toBe(sessionId)
+		expect(await db.select().from(sessions).where(eq(sessions.id, sessionId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
 	test('reusing a session ID from another organization does not reveal the prior receipt', async () => {
 		const request = { ...ensureInput(`cross-org-${randomUUID()}`, 'Tenant-scoped run'), sessionId: randomUUID() }
 		const first = await call(automationRunPrepareProcedure, request, { context: context() })
