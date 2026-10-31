@@ -157,6 +157,42 @@ describe('automation.run.prepare', () => {
 		).toHaveLength(1)
 	})
 
+	test('deleting an organization cascades its prepared session and replay record', async () => {
+		const workosOrganizationId = `workos-delete-${randomUUID()}`
+		const [organization] = await db
+			.insert(organizations)
+			.values({ name: 'Automation deletion test', workos_organization_id: workosOrganizationId })
+			.returning()
+		if (!organization) throw new Error('Failed to create deletion test organization')
+
+		const request = {
+			...ensureInput(`organization-delete-${randomUUID()}`, 'Organization deletion'),
+			sessionId: randomUUID(),
+		}
+		const first = await call(automationRunPrepareProcedure, request, {
+			context: context(userId, organization.id, workosOrganizationId),
+		})
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(1)
+
+		await db.delete(organizations).where(eq(organizations.id, organization.id))
+
+		expect(await db.select().from(sessions).where(eq(sessions.id, first.sessionId))).toHaveLength(0)
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(0)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(0)
+	})
+
 	test('concurrent use preparations with one session ID reject a changed payload', async () => {
 		const task = await call(
 			automationRunPrepareProcedure,
