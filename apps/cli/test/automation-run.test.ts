@@ -89,6 +89,38 @@ describe('automation run options', () => {
 		expect(input).not.toHaveProperty('task')
 	})
 
+	test('includes stable session and host IDs in an idempotent prepare request', () => {
+		const options = parseAutomationRunOptions({
+			...validOptions,
+			hostId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		})
+		const input = buildAutomationPrepareInput(options, {
+			hostId: options.hostId,
+			prompt: 'Retry-safe prompt',
+			workingDirectory: '/checkout/repository',
+		})
+		expect(input).toMatchObject({
+			hostId: options.hostId,
+			sessionId: options.sessionId,
+		})
+	})
+
+	test('requires session and host IDs together', () => {
+		expect(() =>
+			parseAutomationRunOptions({
+				...validOptions,
+				sessionId: '22222222-2222-4222-8222-222222222222',
+			}),
+		).toThrow()
+		expect(() =>
+			parseAutomationRunOptions({
+				...validOptions,
+				hostId: '11111111-1111-4111-8111-111111111111',
+			}),
+		).toThrow()
+	})
+
 	test('loads a relative prompt file from the checkout', async () => {
 		const checkout = await mkdtemp(join(tmpdir(), 'humanlayer-automation-'))
 		try {
@@ -115,10 +147,12 @@ describe('automation run options', () => {
 			await writeAutomationMetadata('run.json', checkout, {
 				taskId: '11111111-1111-4111-8111-111111111111',
 				sessionId: '22222222-2222-4222-8222-222222222222',
+				hostId: '33333333-3333-4333-8333-333333333333',
 			})
 			expect(JSON.parse(await readFile(join(checkout, 'run.json'), 'utf8'))).toEqual({
 				taskId: '11111111-1111-4111-8111-111111111111',
 				sessionId: '22222222-2222-4222-8222-222222222222',
+				hostId: '33333333-3333-4333-8333-333333333333',
 			})
 		} finally {
 			await rm(checkout, { recursive: true, force: true })

@@ -95,6 +95,48 @@ describe('automation.run.prepare', () => {
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(2)
 	})
 
+	test('concurrent preparations with the same session ID return one session and initial event', async () => {
+		const slug = `idempotent-${randomUUID()}`
+		const sessionId = randomUUID()
+		const request = { ...ensureInput(slug, 'Idempotent run'), sessionId }
+		const [first, second] = await Promise.all([
+			call(automationRunPrepareProcedure, request, { context: context() }),
+			call(automationRunPrepareProcedure, request, { context: context() }),
+		])
+
+		expect(first.sessionId).toBe(sessionId)
+		expect(second).toEqual(first)
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('reusing a session ID with changed input conflicts without creating another event', async () => {
+		const request = { ...ensureInput(`changed-${randomUUID()}`, 'Original run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+
+		await expect(
+			call(automationRunPrepareProcedure, { ...request, prompt: 'Changed prompt' }, { context: context() }),
+		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('reusing a session ID from another actor does not reveal the prior receipt', async () => {
+		const request = { ...ensureInput(`actor-${randomUUID()}`, 'Actor-scoped run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+
+		await expect(
+			call(automationRunPrepareProcedure, request, { context: context('other-user') }),
+		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+	})
+
 	test('creates the initial event atomically', async () => {
 		const prepared = await call(automationRunPrepareProcedure, ensureInput(`event-${randomUUID()}`, 'Event task'), {
 			context: context(),

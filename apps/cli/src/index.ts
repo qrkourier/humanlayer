@@ -67,6 +67,8 @@ automation
 	.command('run')
 	.description('Prepare and run one Cloud-visible session in the current checkout')
 	.requiredOption('--pat <value>', 'HumanLayer personal access token')
+	.option('--host-id <uuid>', 'Stable host ID for retrying the same prepared run')
+	.option('--session-id <uuid>', 'Stable session ID for retrying the same prepared run')
 	.option('--ensure-task <slug>', 'Use an active task by slug, creating it when absent')
 	.option('--use-task <id-or-slug>', 'Use an existing task by ID or slug')
 	.option('--task-name <name>', 'Task name required when ensuring a task')

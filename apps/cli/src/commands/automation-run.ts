@@ -15,11 +15,24 @@ import {
 
 export type { AutomationRunCliOptions, AutomationRunOptions } from './AutomationRun'
 
+type AutomationPrepareTargetSession = {
+	hostId: string
+	sessionId?: string
+	sessionName: string
+	prompt: string
+	workingDirectory: string
+	codingAgent: AutomationRunOptions['codingAgent']
+	provider: AutomationRunOptions['provider']
+	model: string
+	effort?: string
+	permissionsMode: 'bypass'
+}
+
 export function buildAutomationPrepareInput(
 	options: AutomationRunOptions,
 	input: { readonly hostId: string; readonly prompt: string; readonly workingDirectory: string },
 ) {
-	const targetSession = {
+	const targetSession: AutomationPrepareTargetSession = {
 		hostId: input.hostId,
 		sessionName: options.sessionName,
 		prompt: input.prompt,
@@ -30,6 +43,7 @@ export function buildAutomationPrepareInput(
 		effort: options.thinking,
 		permissionsMode: 'bypass' as const,
 	}
+	if (options.sessionId !== undefined) targetSession.sessionId = options.sessionId
 	return options.ensureTask !== undefined
 		? {
 				taskMode: 'ensure' as const,
@@ -59,7 +73,7 @@ export async function loadAutomationPrompt(options: AutomationRunOptions, workin
 export async function writeAutomationMetadata(
 	metadataFile: string,
 	workingDirectory: string,
-	metadata: { readonly taskId: string; readonly sessionId: string },
+	metadata: { readonly taskId: string; readonly sessionId: string; readonly hostId: string },
 ): Promise<void> {
 	const metadataPath = isAbsolute(metadataFile) ? metadataFile : resolve(workingDirectory, metadataFile)
 	await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
@@ -75,7 +89,7 @@ export async function automationRunCommand(
 	const workingDirectory = process.cwd()
 	const prompt = await loadAutomationPrompt(options, workingDirectory)
 
-	const hostId = crypto.randomUUID()
+	const hostId = options.hostId ?? crypto.randomUUID()
 	const client = createApiORPCClient(envConfig.apiOrigin, options.pat)
 	const prepared = await client.automation.run.prepare(
 		buildAutomationPrepareInput(options, { hostId, prompt, workingDirectory }),
@@ -84,6 +98,7 @@ export async function automationRunCommand(
 		await writeAutomationMetadata(options.metadataFile, workingDirectory, {
 			taskId: prepared.taskId,
 			sessionId: prepared.sessionId,
+			hostId: prepared.hostId,
 		})
 	}
 	const { token: launchToken } = await client.auth.daemon.launchToken.create({})
