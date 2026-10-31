@@ -116,6 +116,48 @@ describe('automation.run.prepare', () => {
 		).toHaveLength(1)
 	})
 
+	test('concurrent use preparations with one session ID reject a changed payload', async () => {
+		const task = await call(
+			automationRunPrepareProcedure,
+			ensureInput(`concurrent-conflict-${randomUUID()}`, 'Shared task'),
+			{ context: context() },
+		)
+		const sessionId = randomUUID()
+		const request = {
+			taskMode: 'use' as const,
+			taskIdOrSlug: task.taskId,
+			sessionId,
+			hostId: randomUUID(),
+			sessionName: 'Concurrent run',
+			prompt: 'First payload',
+			workingDirectory: '/checkout',
+			codingAgent: 'codelayer' as const,
+			provider: 'anthropic',
+			model: 'opus',
+			permissionsMode: 'bypass' as const,
+		}
+
+		const results = await Promise.allSettled([
+			call(automationRunPrepareProcedure, request, { context: context() }),
+			call(automationRunPrepareProcedure, { ...request, prompt: 'Conflicting payload' }, { context: context() }),
+		])
+		const success = results.find((result) => result.status === 'fulfilled')
+		const conflict = results.find((result) => result.status === 'rejected')
+		expect(success?.status).toBe('fulfilled')
+		expect(conflict?.status).toBe('rejected')
+		if (success?.status !== 'fulfilled' || conflict?.status !== 'rejected') {
+			throw new Error('Expected one prepared receipt and one conflicting replay')
+		}
+		expect(conflict.reason).toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+		expect(success.value.taskId).toBe(task.taskId)
+		expect(success.value.sessionId).toBe(sessionId)
+		expect(await db.select().from(sessions).where(eq(sessions.id, sessionId))).toHaveLength(1)
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, task.taskId))).toHaveLength(2)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
 	test('reusing a session ID with changed input conflicts without creating another event', async () => {
 		const request = { ...ensureInput(`changed-${randomUUID()}`, 'Original run'), sessionId: randomUUID() }
 		const first = await call(automationRunPrepareProcedure, request, { context: context() })
