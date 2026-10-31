@@ -126,6 +126,32 @@ describe('automation.run.prepare', () => {
 		).toHaveLength(1)
 	})
 
+	test('reusing a session ID conflicts when immutable preparation fields change', async () => {
+		const request = { ...ensureInput(`changed-fields-${randomUUID()}`, 'Original run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+		const changedRequests = [
+			['host ID', { ...request, hostId: randomUUID() }],
+			['task selector', { ...request, slug: `${request.slug}-changed` }],
+			['task configuration', { ...request, task: { ...request.task, name: 'Changed task' } }],
+			['session name', { ...request, sessionName: 'Changed session' }],
+			['working directory', { ...request, workingDirectory: '/different-checkout' }],
+			['model', { ...request, model: 'sonnet' }],
+			['permissions', { ...request, permissionsMode: 'accept_edits' as const }],
+		] as const
+
+		for (const [field, changed] of changedRequests) {
+			await expect(
+				call(automationRunPrepareProcedure, changed, { context: context() }),
+				`changed ${field}`,
+			).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+		}
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
+	})
+
 	test('reusing a session ID from another actor does not reveal the prior receipt', async () => {
 		const request = { ...ensureInput(`actor-${randomUUID()}`, 'Actor-scoped run'), sessionId: randomUUID() }
 		const first = await call(automationRunPrepareProcedure, request, { context: context() })
