@@ -33,7 +33,7 @@ export function buildAutomationPrepareInput(
 	input: { readonly hostId: string; readonly prompt: string; readonly workingDirectory: string },
 ) {
 	const targetSession: AutomationPrepareTargetSession = {
-		hostId: input.hostId,
+		hostId: input.hostId.toLowerCase(),
 		sessionName: options.sessionName,
 		prompt: input.prompt,
 		workingDirectory: input.workingDirectory,
@@ -43,7 +43,7 @@ export function buildAutomationPrepareInput(
 		effort: options.thinking,
 		permissionsMode: 'bypass' as const,
 	}
-	if (options.sessionId !== undefined) targetSession.sessionId = options.sessionId
+	if (options.sessionId !== undefined) targetSession.sessionId = options.sessionId.toLowerCase()
 	return options.ensureTask !== undefined
 		? {
 				taskMode: 'ensure' as const,
@@ -89,11 +89,17 @@ export async function automationRunCommand(
 	const workingDirectory = process.cwd()
 	const prompt = await loadAutomationPrompt(options, workingDirectory)
 
-	const hostId = options.hostId ?? crypto.randomUUID()
+	const hostId = (options.hostId ?? crypto.randomUUID()).toLowerCase()
 	const client = createApiORPCClient(envConfig.apiOrigin, options.pat)
 	const prepared = await client.automation.run.prepare(
 		buildAutomationPrepareInput(options, { hostId, prompt, workingDirectory }),
 	)
+	if (
+		prepared.hostId !== hostId ||
+		(options.sessionId !== undefined && prepared.sessionId !== options.sessionId.toLowerCase())
+	) {
+		throw new Error('Prepared automation identity does not match the requested host/session')
+	}
 	if (options.metadataFile !== undefined) {
 		await writeAutomationMetadata(options.metadataFile, workingDirectory, {
 			taskId: prepared.taskId,
