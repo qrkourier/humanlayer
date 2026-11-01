@@ -104,6 +104,9 @@ describe('WorkspaceSetupExecutor', () => {
 			yield* runProcess('git', ['-C', source, 'add', 'README.md', '.gitignore'])
 			yield* runProcess('git', ['-C', source, 'commit', '-m', 'fixture'])
 			yield* fileSystem.writeFileString(path.join(source, '.env'), 'TEST_VALUE=1')
+			const outsideSecret = path.join(fixture, 'outside.env')
+			yield* fileSystem.writeFileString(outsideSecret, 'OUTSIDE_ONLY=true')
+			yield* fileSystem.symlink(outsideSecret, path.join(source, '.env.external'))
 			yield* fileSystem.makeDirectory(path.join(source, 'config'), { recursive: true })
 			yield* fileSystem.writeFileString(path.join(source, 'config', '.gitignore'), 'private/\n')
 			yield* fileSystem.writeFileString(path.join(source, 'config', 'workspace.json'), '{"copy":true}')
@@ -126,7 +129,7 @@ describe('WorkspaceSetupExecutor', () => {
 					branch: 'phase-5-test',
 					sourceRef: 'HEAD',
 					setupCommand: 'printf setup-complete > setup.txt',
-					copyGlobs: ['.env', '**/*.json'],
+					copyGlobs: ['.env', '.env.external', '**/*.json'],
 					primary: true,
 				},
 			} as const
@@ -146,6 +149,7 @@ describe('WorkspaceSetupExecutor', () => {
 			const copied = yield* executor.copyConfiguredFiles(operation)
 			expect(copied.filesCopied).toEqual(['.env', 'config/workspace.json'])
 			expect(yield* fileSystem.readFileString(path.join(target, '.env'))).toBe('TEST_VALUE=1')
+			expect(yield* fileSystem.exists(path.join(target, '.env.external'))).toBe(false)
 			expect(yield* fileSystem.readFileString(path.join(target, 'config', 'workspace.json'))).toBe(
 				'{"copy":true}',
 			)
