@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { createServer } from 'node:http'
+import { createServer, type IncomingHttpHeaders } from 'node:http'
 import { fileURLToPath } from 'node:url'
 
 import { expect, test } from 'vitest'
@@ -11,7 +11,7 @@ test('humanlayer automation run sends a piped PAT to prepare without an argv tok
 	const requests: Array<{
 		method: string | undefined
 		url: string | undefined
-		authorization: string | string[] | undefined
+		headers: IncomingHttpHeaders
 		body: string
 	}> = []
 
@@ -25,7 +25,7 @@ test('humanlayer automation run sends a piped PAT to prepare without an argv tok
 			requests.push({
 				method: request.method,
 				url: request.url,
-				authorization: request.headers.authorization,
+				headers: request.headers,
 				body,
 			})
 			response.writeHead(401, { 'content-type': 'application/json' })
@@ -100,12 +100,17 @@ test('humanlayer automation run sends a piped PAT to prepare without an argv tok
 			const safeOutput = output.replaceAll(syntheticPat, '[redacted]')
 			throw new Error(`Expected one prepare request, got ${requests.length}. CLI output: ${safeOutput}`)
 		}
-		expect(requests[0]).toMatchObject({
+		const request = requests[0]
+		if (request === undefined) throw new Error('Expected one captured API request')
+		expect(request).toMatchObject({
 			method: 'POST',
 			url: '/rpc/api/v1/automation/run/prepare',
-			authorization: 'Bearer ' + syntheticPat,
 		})
-		expect(requests[0]?.body).not.toContain(syntheticPat)
+		const { authorization, ...otherHeaders } = request.headers
+		expect(authorization).toBe('Bearer ' + syntheticPat)
+		expect(JSON.stringify(otherHeaders)).not.toContain(syntheticPat)
+		expect(request.url).not.toContain(syntheticPat)
+		expect(request.body).not.toContain(syntheticPat)
 		expect(output).not.toContain(syntheticPat)
 	} finally {
 		if (child.exitCode === null) child.kill('SIGKILL')
