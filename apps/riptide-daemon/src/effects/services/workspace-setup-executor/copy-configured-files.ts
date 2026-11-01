@@ -37,6 +37,7 @@ export const copyConfiguredWorkspaceFiles = (input: WorkspaceRepoOperationInput)
 			localPath: input.repo.localPath,
 			singleRepositoryName: input.singleRepositoryName,
 		})
+		const sourceRoot = yield* fileSystem.realPath(sourceDirectory)
 		const targetDirectory = yield* workspacePathResolver.resolveTargetDirectory({
 			targetPath: input.repo.targetPath,
 		})
@@ -47,12 +48,14 @@ export const copyConfiguredWorkspaceFiles = (input: WorkspaceRepoOperationInput)
 				if (!isSafeWorkspaceRelativePath(normalizedEntry) || copiedPaths.has(normalizedEntry)) return undefined
 				const sourcePath = pathService.join(sourceDirectory, normalizedEntry)
 				if (!(yield* fileSystem.exists(sourcePath))) return undefined
-				const info = yield* fileSystem.stat(sourcePath)
+				const resolvedSourcePath = yield* fileSystem.realPath(sourcePath)
+				if (!isSafeWorkspaceRelativePath(pathService.relative(sourceRoot, resolvedSourcePath))) return undefined
+				const info = yield* fileSystem.stat(resolvedSourcePath)
 				if (info.type !== 'File') return undefined
 				copiedPaths.add(normalizedEntry)
 				const destinationPath = pathService.join(targetDirectory, normalizedEntry)
 				yield* fileSystem.makeDirectory(pathService.dirname(destinationPath), { recursive: true })
-				yield* fileSystem.copyFile(sourcePath, destinationPath)
+				yield* fileSystem.copyFile(resolvedSourcePath, destinationPath)
 				return normalizedEntry
 			})
 

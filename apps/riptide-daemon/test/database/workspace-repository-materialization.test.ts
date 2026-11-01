@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -296,13 +296,18 @@ describe('workspace repository materialization boundary', () => {
 		await exec('git', ['-C', source, 'config', 'user.email', 'workspace-test@example.com'])
 		await exec('git', ['-C', source, 'config', 'user.name', 'Workspace Test'])
 		await writeFile(join(source, 'README.md'), 'complete setup\n')
-		await writeFile(join(source, '.gitignore'), '.env*\n')
+		await writeFile(join(source, '.gitignore'), '.env*\nprivate/**\n')
 		await writeFile(join(source, '.env.test'), 'COPIED=true\n')
 		await exec('git', ['-C', source, 'add', 'README.md', '.gitignore'])
 		await exec('git', ['-C', source, 'commit', '-m', 'fixture'])
 		await exec('git', ['-C', source, 'remote', 'add', 'origin', remoteUrl])
 		await exec('git', ['-C', source, 'config', `url.${remote}.insteadOf`, remoteUrl])
 		await exec('git', ['-C', source, 'push', 'origin', 'main'])
+		const outsideSecret = join(root, 'outside.env')
+		await writeFile(outsideSecret, 'OUTSIDE_ONLY=true\n')
+		await symlink(outsideSecret, join(source, '.env.external'))
+		await mkdir(join(source, 'private'))
+		await writeFile(join(source, 'private', 'secret.txt'), 'UNMATCHED_IGNORED=true\n')
 
 		const fixture = await createFilesystemWorkspaceActorFixture(db, {
 			targetRoot: target,
@@ -332,6 +337,8 @@ describe('workspace repository materialization boundary', () => {
 			error: null,
 		})
 		expect(await readFile(join(target, '.env.test'), 'utf8')).toBe('COPIED=true\n')
+		await expect(readFile(join(target, '.env.external'), 'utf8')).rejects.toThrow()
+		await expect(readFile(join(target, 'private', 'secret.txt'), 'utf8')).rejects.toThrow()
 		expect(await readFile(join(target, 'setup-result.txt'), 'utf8')).toBe('setup-complete')
 		await exec('git', ['--git-dir', remote, 'show-ref', '--verify', 'refs/heads/workspace-complete-setup'])
 	})

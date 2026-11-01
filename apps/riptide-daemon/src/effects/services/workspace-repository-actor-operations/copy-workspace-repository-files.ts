@@ -4,6 +4,7 @@ import {
 } from '@humanlayer/schemas/effect/project-workspace'
 import { Clock, Effect, FileSystem, Path } from 'effect'
 
+import { GitCommandRunner } from '../task-diff/git-command-runner.service'
 import { resolveWorkspacePath } from '../workspace-path-resolver/resolve-workspace-path'
 import {
 	isSafeWorkspaceRelativePath,
@@ -21,6 +22,7 @@ export const copyWorkspaceRepositoryFiles = Effect.fn('workspace_repository.copy
 ) {
 	const fileSystem = yield* FileSystem.FileSystem
 	const pathService = yield* Path.Path
+	const git = yield* GitCommandRunner
 	const snapshot = input.snapshot
 	const storedSourcePath = snapshot.status.sourcePath
 	if (storedSourcePath === null) {
@@ -54,10 +56,23 @@ export const copyWorkspaceRepositoryFiles = Effect.fn('workspace_repository.copy
 	// The copied-file set is the result; avoid retaining one unused Effect result per matched file.
 	yield* Effect.forEach(literalPaths, copyRelativePath, { concurrency: 8, discard: true })
 	const globPatterns = snapshot.repository.copyGlobs.filter(workspacePathHasGlobMagic)
-	const matches = yield* Effect.forEach(globPatterns, (pattern) => fileSystem.glob(pattern, { root: source }), {
-		concurrency: 8,
-	})
-	yield* Effect.forEach(matches.flat(), copyRelativePath, { concurrency: 8, discard: true })
+	if (globPatterns.length > 0) {
+		const { stdout } = yield* git.run(
+			[
+				'ls-files',
+				'-z',
+				'--cached',
+				'--others',
+				'--exclude-standard',
+				'--ignored',
+				'--',
+				...globPatterns.map((pattern) => `:(glob)${pattern}`),
+			],
+			{ cwd: source },
+		)
+		const matchingPaths = stdout.split('\0').filter((entry) => entry.length > 0)
+		yield* Effect.forEach(matchingPaths, copyRelativePath, { concurrency: 8, discard: true })
+	}
 	const completedAt = yield* Clock.currentTimeMillis
 	return WorkspaceRepositorySetupResult.cases.FilesCopied.make({
 		result: { copiedFiles: [...copied], completedAt },
