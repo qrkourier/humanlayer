@@ -53,6 +53,12 @@ const options = {
 } satisfies AutomationRunCliOptions
 
 const environmentKeys = ['LOG_LEVEL', 'RIPTIDE_CLOUD_ORIGIN', 'RIPTIDE_APP_ORIGIN'] as const
+function makeStdinOptions(): Record<string, unknown> {
+	const stdinOptions: Record<string, unknown> = { ...options, patStdin: true }
+	Reflect.deleteProperty(stdinOptions, 'pat')
+	return stdinOptions
+}
+
 const originalStdinDescriptor = Object.getOwnPropertyDescriptor(process, 'stdin')
 let previousEnvironment = new Map<string, string | undefined>()
 
@@ -169,8 +175,7 @@ describe('automation run command identity', () => {
 			value: Readable.from(['synthetic-pat\n']),
 		})
 
-		const stdinOptions = { ...options, patStdin: true }
-		Reflect.deleteProperty(stdinOptions, 'pat')
+		const stdinOptions = makeStdinOptions()
 
 		await expect(automationRunCommand('local', envConfig, stdinOptions)).resolves.toBe(0)
 
@@ -182,8 +187,7 @@ describe('automation run command identity', () => {
 		Object.defineProperty(stdin, 'isTTY', { configurable: true, value: true })
 		Object.defineProperty(process, 'stdin', { configurable: true, writable: true, value: stdin })
 
-		const stdinOptions = { ...options, patStdin: true }
-		Reflect.deleteProperty(stdinOptions, 'pat')
+		const stdinOptions = makeStdinOptions()
 
 		await expect(automationRunCommand('local', envConfig, stdinOptions)).rejects.toThrow('interactive terminal')
 		expect(mocks.createApiORPCClient).not.toHaveBeenCalled()
@@ -196,8 +200,7 @@ describe('automation run command identity', () => {
 			value: Readable.from([]),
 		})
 
-		const stdinOptions = { ...options, patStdin: true }
-		Reflect.deleteProperty(stdinOptions, 'pat')
+		const stdinOptions = makeStdinOptions()
 
 		await expect(automationRunCommand('local', envConfig, stdinOptions)).rejects.toThrow(
 			'Expected one non-empty HumanLayer PAT on stdin',
