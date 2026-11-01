@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 const supportedTargets = new Set([
@@ -29,12 +29,31 @@ try {
   process.exit(1)
 }
 
-const result = spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' })
+const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' })
+const signalHandlers = new Map()
+let receivedSignal
 
-if (result.error) {
-  console.error('Failed to start the HumanLayer CLI binary: ' + result.error.message)
-  process.exit(1)
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  const handler = () => {
+    receivedSignal ??= signal
+    child.kill(signal)
+  }
+  signalHandlers.set(signal, handler)
+  process.on(signal, handler)
 }
 
-if (result.signal) process.kill(process.pid, result.signal)
-process.exit(result.status ?? 1)
+child.on('error', (error) => {
+  for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler)
+  console.error('Failed to start the HumanLayer CLI binary: ' + error.message)
+  process.exitCode = 1
+})
+
+child.on('exit', (code, signal) => {
+  for (const [registeredSignal, handler] of signalHandlers) process.removeListener(registeredSignal, handler)
+  const terminationSignal = signal ?? receivedSignal
+  if (terminationSignal) {
+    process.kill(process.pid, terminationSignal)
+    return
+  }
+  process.exitCode = code ?? 1
+})

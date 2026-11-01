@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmod, copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -43,6 +43,8 @@ test.skipIf(process.platform === 'win32' || !['x64', 'arm64'].includes(process.a
 			const platformRoot = join(scratch, 'platform-package')
 			const wrapperBin = join(wrapperRoot, 'bin', 'humanlayer')
 			const platformBin = join(platformRoot, 'bin', 'humanlayer')
+			const platformPidPath = join(scratch, 'platform-pid.txt')
+			const forwardedSignalPath = join(scratch, 'forwarded-signal.txt')
 			const packageManifest = JSON.parse(await readFile(join(cliRoot, 'package.json'), 'utf8')) as {
 				name: string
 				version: string
@@ -81,6 +83,15 @@ test.skipIf(process.platform === 'win32' || !['x64', 'arm64'].includes(process.a
 				[
 					'#!/usr/bin/env node',
 					"const fs = require('node:fs')",
+					"if (process.env.HUMANLAYER_TEST_WAIT_FOR_SIGNAL === '1') {",
+					'  fs.writeFileSync(process.env.HUMANLAYER_TEST_PLATFORM_PID, String(process.pid))',
+					"  process.on('SIGTERM', () => {",
+					"    fs.writeFileSync(process.env.HUMANLAYER_TEST_FORWARDED_SIGNAL, 'SIGTERM')",
+					'    process.exit(0)',
+					'  })',
+					"  process.stdout.write('platform-ready\\n')",
+					'  setInterval(() => {}, 1000)',
+					'}',
 					'let stdin = ""',
 					"process.stdin.setEncoding('utf8')",
 					"process.stdin.on('data', (chunk) => { stdin += chunk })",
@@ -171,6 +182,72 @@ test.skipIf(process.platform === 'win32' || !['x64', 'arm64'].includes(process.a
 			expect(interrupted.error).toBeUndefined()
 			expect(interrupted.signal).toBe('SIGTERM')
 			expect(interrupted.status).toBeNull()
+
+			const forwarding = spawn(globalCommand, args, {
+				env: {
+					...npmEnvironment(scratch),
+					HUMANLAYER_TEST_WAIT_FOR_SIGNAL: '1',
+					HUMANLAYER_TEST_PLATFORM_PID: platformPidPath,
+					HUMANLAYER_TEST_FORWARDED_SIGNAL: forwardedSignalPath,
+				},
+				stdio: ['pipe', 'pipe', 'pipe'],
+			})
+			let readyOutput = ''
+			const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+				forwarding.once('close', (code, signal) => resolve({ code, signal }))
+			})
+			const ready = new Promise<void>((resolve, reject) => {
+				const timeout = setTimeout(() => reject(new Error('Platform process did not start')), 3_000)
+				forwarding.stdout?.setEncoding('utf8')
+				forwarding.stdout?.on('data', (chunk: string) => {
+					readyOutput += chunk
+					if (readyOutput.includes('platform-ready\n')) {
+						clearTimeout(timeout)
+						resolve()
+					}
+				})
+				forwarding.once('error', (error) => {
+					clearTimeout(timeout)
+					reject(error)
+				})
+				forwarding.once('close', () => {
+					clearTimeout(timeout)
+					if (!readyOutput.includes('platform-ready\n')) {
+						reject(new Error('CLI launcher exited before the platform process became ready'))
+					}
+				})
+			})
+			forwarding.stdin?.end(syntheticPat + '\n')
+
+			try {
+				await ready
+				forwarding.kill('SIGTERM')
+				const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+					(resolve, reject) => {
+						const timeout = setTimeout(
+							() => reject(new Error('CLI launcher did not exit after SIGTERM')),
+							3_000,
+						)
+						closed.then((result) => {
+							clearTimeout(timeout)
+							resolve(result)
+						})
+					},
+				)
+				expect(result.signal).toBe('SIGTERM')
+				expect(await readFile(forwardedSignalPath, 'utf8')).toBe('SIGTERM')
+			} finally {
+				if (forwarding.exitCode === null && forwarding.signalCode === null) forwarding.kill('SIGKILL')
+				const forwardedSignal = await readFile(forwardedSignalPath, 'utf8').catch(() => '')
+				if (forwardedSignal.length === 0) {
+					const platformPid = await readFile(platformPidPath, 'utf8').catch(() => '')
+					if (platformPid.length > 0) {
+						try {
+							process.kill(Number(platformPid), 'SIGKILL')
+						} catch {}
+					}
+				}
+			}
 		} finally {
 			await rm(scratch, { recursive: true, force: true })
 		}
