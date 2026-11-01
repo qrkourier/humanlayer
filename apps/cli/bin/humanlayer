@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+
+import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
+
+const supportedTargets = new Set([
+  'darwin-arm64',
+  'darwin-x64',
+  'linux-arm64',
+  'linux-x64',
+  'win32-x64',
+])
+const target = process.platform + '-' + process.arch
+
+if (!supportedTargets.has(target)) {
+  console.error('The HumanLayer CLI does not publish a binary for ' + target + '.')
+  process.exit(1)
+}
+
+const platformPackage = '@humanlayer/cli-' + target
+const binaryName = process.platform === 'win32' ? 'humanlayer.exe' : 'humanlayer'
+const requireFromLauncher = createRequire(import.meta.url)
+let binaryPath
+
+try {
+  binaryPath = requireFromLauncher.resolve(platformPackage + '/bin/' + binaryName)
+} catch {
+  console.error('The HumanLayer CLI binary package is missing for ' + target + '. Reinstall @humanlayer/cli.')
+  process.exit(1)
+}
+
+const result = spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' })
+
+if (result.error) {
+  console.error('Failed to start the HumanLayer CLI binary: ' + result.error.message)
+  process.exit(1)
+}
+
+if (result.signal) process.kill(process.pid, result.signal)
+process.exit(result.status ?? 1)

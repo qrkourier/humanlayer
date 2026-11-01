@@ -101,6 +101,9 @@ logs/
 **/dist/*
 **/bin/*
 
+# The npm command is source; platform binaries remain generated artifacts.
+!apps/cli/bin/humanlayer
+
 # Evaluation results (generated)
 packages/ai/eval-results/
 packages/ai/eval-results-agentic/
