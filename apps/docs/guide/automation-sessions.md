@@ -51,6 +51,20 @@ Store the token in your automation platform's secret store. Never commit it.
 
 Run the command from the directory the agent should work in. The coding agent also needs its provider credential in the environment — `ANTHROPIC_API_KEY` for the default Claude setup.
 
+For noninteractive callers that must keep the HumanLayer PAT out of process arguments, use `--pat-stdin` with a pipe or secret file:
+
+```bash
+humanlayer automation run \
+  --pat-stdin \
+  --ensure-task readme-greeter \
+  --task-name "README greeter" \
+  --session-name "Greeting run" \
+  --prompt-file automation/greeting.md \
+  < /run/secrets/humanlayer-pat
+```
+
+`--pat-stdin` reads one token through end-of-file, rejects empty input and interactive terminals, and cannot be combined with `--pat`. The existing `--pat <value>` option remains available for current callers.
+
 ```bash
 humanlayer automation run \
   --pat "${HUMANLAYER_PAT}" \

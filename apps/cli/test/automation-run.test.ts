@@ -121,6 +121,22 @@ describe('automation run options', () => {
 		).toThrow()
 	})
 
+	test('accepts stdin as the only PAT source', () => {
+		const stdinOptions = { ...validOptions, patStdin: true }
+		Reflect.deleteProperty(stdinOptions, 'pat')
+		const parsed = parseAutomationRunOptions(stdinOptions)
+
+		expect(parsed.pat).toBeUndefined()
+		expect(parsed.patStdin).toBe(true)
+	})
+
+	test('requires exactly one PAT source', () => {
+		const missingPat = { ...validOptions }
+		Reflect.deleteProperty(missingPat, 'pat')
+		expect(() => parseAutomationRunOptions(missingPat)).toThrow()
+		expect(() => parseAutomationRunOptions({ ...validOptions, patStdin: true })).toThrow()
+	})
+
 	test('loads a relative prompt file from the checkout', async () => {
 		const checkout = await mkdtemp(join(tmpdir(), 'humanlayer-automation-'))
 		try {

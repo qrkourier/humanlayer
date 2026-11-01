@@ -79,6 +79,22 @@ export async function writeAutomationMetadata(
 	await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
 }
 
+async function readAutomationPatFromStdin(): Promise<string> {
+	if (process.stdin.isTTY === true) {
+		throw new Error('Cannot read a HumanLayer PAT from an interactive terminal; pipe it with --pat-stdin')
+	}
+
+	const chunks: string[] = []
+	for await (const chunk of process.stdin) {
+		chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+	}
+	const pat = chunks.join('').trim()
+	if (pat.length === 0 || /\s/.test(pat)) {
+		throw new Error('Expected one non-empty HumanLayer PAT on stdin')
+	}
+	return pat
+}
+
 export async function automationRunCommand(
 	envName: EnvironmentName,
 	envConfig: EnvironmentConfig,
@@ -88,9 +104,10 @@ export async function automationRunCommand(
 
 	const workingDirectory = process.cwd()
 	const prompt = await loadAutomationPrompt(options, workingDirectory)
+	const pat = options.pat ?? (await readAutomationPatFromStdin())
 
 	const hostId = (options.hostId ?? crypto.randomUUID()).toLowerCase()
-	const client = createApiORPCClient(envConfig.apiOrigin, options.pat)
+	const client = createApiORPCClient(envConfig.apiOrigin, pat)
 	const prepared = await client.automation.run.prepare(
 		buildAutomationPrepareInput(options, { hostId, prompt, workingDirectory }),
 	)

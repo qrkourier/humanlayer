@@ -52,7 +52,8 @@ export const AutomationInactivityMilliseconds = Schema.String.pipe(
 export type AutomationInactivityMilliseconds = typeof AutomationInactivityMilliseconds.Type
 
 const commonFields = {
-	pat: RequiredOption,
+	pat: Schema.optionalKey(RequiredOption),
+	patStdin: Schema.optionalKey(Schema.Boolean),
 	hostId: Schema.optionalKey(UuidOption),
 	sessionId: Schema.optionalKey(UuidOption),
 	sessionName: RequiredOption,
@@ -101,6 +102,10 @@ const AutomationRunOptionsBase = Schema.Union(
 export const AutomationRunOptions = AutomationRunOptionsBase.check(
 	Schema.makeFilter((options) => (options.hostId === undefined) === (options.sessionId === undefined), {
 		error: { message: 'hostId and sessionId must be provided together for an idempotent retry' },
+	}),
+).check(
+	Schema.makeFilter((options) => (options.pat !== undefined) !== (options.patStdin === true), {
+		error: { message: 'provide exactly one of --pat or --pat-stdin' },
 	}),
 )
 export type AutomationRunOptions = typeof AutomationRunOptions.Type

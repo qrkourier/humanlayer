@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream'
+
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -51,6 +53,7 @@ const options = {
 } satisfies AutomationRunCliOptions
 
 const environmentKeys = ['LOG_LEVEL', 'RIPTIDE_CLOUD_ORIGIN', 'RIPTIDE_APP_ORIGIN'] as const
+const originalStdinDescriptor = Object.getOwnPropertyDescriptor(process, 'stdin')
 let previousEnvironment = new Map<string, string | undefined>()
 
 describe('automation run command identity', () => {
@@ -81,6 +84,9 @@ describe('automation run command identity', () => {
 			const value = previousEnvironment.get(key)
 			if (value === undefined) delete process.env[key]
 			else process.env[key] = value
+		}
+		if (originalStdinDescriptor !== undefined) {
+			Object.defineProperty(process, 'stdin', originalStdinDescriptor)
 		}
 	})
 
@@ -154,5 +160,48 @@ describe('automation run command identity', () => {
 				automation: expect.objectContaining({ targetSessionId: sessionId }),
 			}),
 		)
+	})
+
+	test('reads the PAT from stdin when the option contains no PAT value', async () => {
+		Object.defineProperty(process, 'stdin', {
+			configurable: true,
+			writable: true,
+			value: Readable.from(['synthetic-pat\n']),
+		})
+
+		const stdinOptions = { ...options, patStdin: true }
+		Reflect.deleteProperty(stdinOptions, 'pat')
+
+		await expect(automationRunCommand('local', envConfig, stdinOptions)).resolves.toBe(0)
+
+		expect(mocks.createApiORPCClient).toHaveBeenCalledWith(envConfig.apiOrigin, 'synthetic-pat')
+	})
+
+	test('rejects stdin PAT input from an interactive terminal', async () => {
+		const stdin = Readable.from(['synthetic-pat\n'])
+		Object.defineProperty(stdin, 'isTTY', { configurable: true, value: true })
+		Object.defineProperty(process, 'stdin', { configurable: true, writable: true, value: stdin })
+
+		const stdinOptions = { ...options, patStdin: true }
+		Reflect.deleteProperty(stdinOptions, 'pat')
+
+		await expect(automationRunCommand('local', envConfig, stdinOptions)).rejects.toThrow('interactive terminal')
+		expect(mocks.createApiORPCClient).not.toHaveBeenCalled()
+	})
+
+	test('rejects empty stdin PAT input before API calls', async () => {
+		Object.defineProperty(process, 'stdin', {
+			configurable: true,
+			writable: true,
+			value: Readable.from([]),
+		})
+
+		const stdinOptions = { ...options, patStdin: true }
+		Reflect.deleteProperty(stdinOptions, 'pat')
+
+		await expect(automationRunCommand('local', envConfig, stdinOptions)).rejects.toThrow(
+			'Expected one non-empty HumanLayer PAT on stdin',
+		)
+		expect(mocks.createApiORPCClient).not.toHaveBeenCalled()
 	})
 })
