@@ -26,6 +26,7 @@ interface LifecycleControls {
 	readonly closes: Queue.Queue<void>
 	readonly sentPrompts: Queue.Queue<string>
 	readonly readyForInput: Queue.Queue<void>
+	readonly closeInputOnResult: Queue.Queue<boolean>
 }
 
 const resultEvent = { type: 'result', subtype: 'success' } as SDKMessage
@@ -139,11 +140,14 @@ function makeClaudeSessionsTestLayer(
 			}),
 	})
 	const processOpenSession: Parameters<typeof makeClaudeSessionsLive>[0] = (input) => {
+		const closeInputOnResult = input.closeInputOnResult === true
 		const completeResult = (input.onResult ?? Effect.void).pipe(
 			Effect.andThen(Queue.offer(controls.readyForInput, undefined)),
 		)
-		return completeResult.pipe(
-			Effect.andThen(Stream.fromQueue(controls.events).pipe(Stream.runForEach(() => completeResult))),
+		const followUps = Stream.fromQueue(controls.events).pipe(Stream.runForEach(() => completeResult))
+		return Queue.offer(controls.closeInputOnResult, closeInputOnResult).pipe(
+			Effect.andThen(completeResult),
+			Effect.andThen(closeInputOnResult ? Effect.void : followUps),
 		)
 	}
 	return makeClaudeSessionsLive(processOpenSession).pipe(Layer.provideMerge(sdk), Layer.provideMerge(dependencies))
@@ -155,6 +159,7 @@ const makeControls = Effect.gen(function* () {
 		closes: yield* Queue.unbounded<void>(),
 		sentPrompts: yield* Queue.unbounded<string>(),
 		readyForInput: yield* Queue.unbounded<void>(),
+		closeInputOnResult: yield* Queue.unbounded<boolean>(),
 	}
 })
 
@@ -169,11 +174,32 @@ describe('ClaudeSessionsLive lifecycle', () => {
 					context: makeSessionContext(session),
 					setupArtifactPaths: () => Promise.reject('unused'),
 				})
+				expect(yield* Queue.take(controls.closeInputOnResult)).toBe(false)
 				yield* Queue.take(controls.readyForInput)
 				yield* TestClock.adjust('10 minutes')
 				yield* Queue.take(controls.closes)
 				expect(yield* Queue.size(controls.closes)).toBe(0)
 				expect(yield* sessions.stopClaudeSession({ sessionId: session.id })).toBe('not-active')
+			}).pipe(Effect.provide(makeClaudeSessionsTestLayer(controls)), Effect.scoped)
+		}),
+	)
+
+	it.effect('closes the Claude SDK input after a bounded automation result', ({ expect }) =>
+		Effect.gen(function* () {
+			const controls = yield* makeControls
+			const session = makeBasicEffectSession()
+			const context = makeSessionContext(session)
+			context.services = { automationTargetSessionId: session.id } as DaemonServices
+			yield* Effect.gen(function* () {
+				const sessions = yield* ClaudeSessions
+				yield* sessions.executeClaudeSession({
+					context,
+					setupArtifactPaths: () => Promise.reject('unused'),
+				})
+				expect(yield* Queue.take(controls.closeInputOnResult)).toBe(true)
+				yield* Queue.take(controls.readyForInput)
+				yield* Queue.take(controls.closes)
+				expect(yield* sessions.activeSessionIds).toEqual([])
 			}).pipe(Effect.provide(makeClaudeSessionsTestLayer(controls)), Effect.scoped)
 		}),
 	)

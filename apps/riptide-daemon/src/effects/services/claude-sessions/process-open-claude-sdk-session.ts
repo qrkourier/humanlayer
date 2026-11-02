@@ -11,6 +11,7 @@ export const processOpenClaudeSdkSession = Effect.fn('claude.process_open_sdk_se
 	readonly prepared: PreparedClaudeRun
 	readonly sdkSession: ClaudeSdkSession
 	readonly onResult?: Effect.Effect<void>
+	readonly closeInputOnResult?: boolean
 }) {
 	const collections = yield* DaemonCollections
 	const sessionId = input.prepared.session.id
@@ -27,5 +28,6 @@ export const processOpenClaudeSdkSession = Effect.fn('claude.process_open_sdk_se
 		sdkSession: input.sdkSession,
 		interruptState: input.prepared.interruptState,
 		onResult: input.onResult,
+		closeInputOnResult: input.closeInputOnResult,
 	}).pipe(Effect.provide(StreamProducerLiveForSession({ sessionId })))
 })

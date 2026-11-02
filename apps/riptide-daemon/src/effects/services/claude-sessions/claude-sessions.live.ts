@@ -229,7 +229,11 @@ export const makeClaudeSessionsLive = (
 					(entry) => removeGeneration(sessionId, entry.generation),
 				)
 
-			const runClaudeProcessToCompletion = (prepared: PreparedClaudeRun, onRegistered: Effect.Effect<void>) =>
+			const runClaudeProcessToCompletion = (
+				prepared: PreparedClaudeRun,
+				onRegistered: Effect.Effect<void>,
+				closeInputOnResult: boolean,
+			) =>
 				Effect.scoped(
 					Effect.gen(function* () {
 						const sdk = yield* ClaudeSdk
@@ -242,6 +246,7 @@ export const makeClaudeSessionsLive = (
 							prepared,
 							sdkSession,
 							onResult: armIdleTimeout(sessionId, entry),
+							closeInputOnResult,
 						})
 					}),
 				).pipe(
@@ -328,8 +333,12 @@ export const makeClaudeSessionsLive = (
 			const runClaudeSession = (input: ExecuteClaudeSessionInput, onRegistered: Effect.Effect<void>) =>
 				Effect.gen(function* () {
 					const api = yield* DaemonApi
+					const closeInputOnResult =
+						input.context.services.automationTargetSessionId === input.context.session.id
 					yield* prepareClaudeRun(input, configuration).pipe(
-						Effect.flatMap((prepared) => runClaudeProcessToCompletion(prepared, onRegistered)),
+						Effect.flatMap((prepared) =>
+							runClaudeProcessToCompletion(prepared, onRegistered, closeInputOnResult),
+						),
 						Effect.catch((cause) => {
 							const sessionId = input.context.session.id
 							const errorMessage = describeClaudeSdkCause(cause)
