@@ -80,6 +80,7 @@ automation
 	.option('-p, --provider <provider>', 'Provider: anthropic, openai, codex, copilot, firepass', 'anthropic')
 	.option('-m, --model <model>', 'Model ID (defaults per provider)')
 	.option('--thinking <value>', 'Reasoning/thinking effort: low, medium, high, xhigh, max')
+	.option('--permissions-mode <mode>', 'Session permission mode: default, accept_edits, auto, or bypass', 'bypass')
 	.option('--metadata-file <path>', 'Write the prepared task and session IDs as JSON')
 	.option('--shutdown-on <mode>', 'Shutdown mode: inactivity or stop', 'inactivity')
 	.option('--inactivity <duration>', 'Inactivity window, for example 2m', '2m')

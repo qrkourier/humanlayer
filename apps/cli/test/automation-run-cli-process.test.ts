@@ -7,7 +7,7 @@ import { expect, test } from 'vitest'
 const cliEntry = fileURLToPath(new URL('../src/index.ts', import.meta.url))
 const syntheticPat = 'synthetic-cli-stdin-pat'
 
-test('humanlayer automation run sends a piped PAT to prepare without an argv token or daemon launch', async () => {
+test('humanlayer automation run forwards an explicit permission mode and piped PAT without an argv token or daemon launch', async () => {
 	const requests: Array<{
 		method: string | undefined
 		url: string | undefined
@@ -55,6 +55,8 @@ test('humanlayer automation run sends a piped PAT to prepare without an argv tok
 		'CLI stdin process test',
 		'--prompt',
 		'No-effect fixture prompt',
+		'--permissions-mode',
+		'default',
 	]
 	const child = spawn('bun', args, {
 		cwd: fileURLToPath(new URL('..', import.meta.url)),
@@ -111,6 +113,9 @@ test('humanlayer automation run sends a piped PAT to prepare without an argv tok
 		expect(JSON.stringify(otherHeaders)).not.toContain(syntheticPat)
 		expect(request.url).not.toContain(syntheticPat)
 		expect(request.body).not.toContain(syntheticPat)
+		const prepareEnvelope = JSON.parse(request.body)
+		const prepareInput = prepareEnvelope.json ?? prepareEnvelope
+		expect(prepareInput.permissionsMode).toBe('default')
 		expect(output).not.toContain(syntheticPat)
 	} finally {
 		if (child.exitCode === null) child.kill('SIGKILL')

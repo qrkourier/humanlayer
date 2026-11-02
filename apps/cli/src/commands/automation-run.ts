@@ -25,7 +25,7 @@ type AutomationPrepareTargetSession = {
 	provider: AutomationRunOptions['provider']
 	model: string
 	effort?: string
-	permissionsMode: 'bypass'
+	permissionsMode: NonNullable<AutomationRunOptions['permissionsMode']>
 }
 
 export function buildAutomationPrepareInput(
@@ -41,7 +41,7 @@ export function buildAutomationPrepareInput(
 		provider: options.provider,
 		model: options.model ?? DEFAULT_MODELS[options.provider],
 		effort: options.thinking,
-		permissionsMode: 'bypass' as const,
+		permissionsMode: options.permissionsMode ?? 'bypass',
 	}
 	if (options.sessionId !== undefined) targetSession.sessionId = options.sessionId.toLowerCase()
 	return options.ensureTask !== undefined

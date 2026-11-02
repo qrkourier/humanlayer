@@ -61,6 +61,7 @@ const commonFields = {
 	provider: Schema.Literals(['anthropic', 'openai', 'codex', 'copilot', 'firepass']),
 	model: Schema.optionalKey(RequiredOption),
 	thinking: Schema.optionalKey(Schema.Literals(['low', 'medium', 'high', 'xhigh', 'max'])),
+	permissionsMode: Schema.optionalKey(Schema.Literals(['default', 'accept_edits', 'auto', 'bypass'])),
 	metadataFile: Schema.optionalKey(RequiredOption),
 	shutdownOn: Schema.Literals(['inactivity', 'stop']),
 	inactivity: AutomationInactivityMilliseconds,
