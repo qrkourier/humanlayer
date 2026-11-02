@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+
+import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
+
+const supportedTargets = new Set([
+  'darwin-arm64',
+  'darwin-x64',
+  'linux-arm64',
+  'linux-x64',
+  'win32-x64',
+])
+const target = process.platform + '-' + process.arch
+
+if (!supportedTargets.has(target)) {
+  console.error('The HumanLayer CLI does not publish a binary for ' + target + '.')
+  process.exit(1)
+}
+
+const platformPackage = '@humanlayer/cli-' + target
+const binaryName = process.platform === 'win32' ? 'humanlayer.exe' : 'humanlayer'
+const requireFromLauncher = createRequire(import.meta.url)
+let binaryPath
+
+try {
+  binaryPath = requireFromLauncher.resolve(platformPackage + '/bin/' + binaryName)
+} catch {
+  console.error('The HumanLayer CLI binary package is missing for ' + target + '. Reinstall @humanlayer/cli.')
+  process.exit(1)
+}
+
+const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' })
+const signalHandlers = new Map()
+let receivedSignal
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  const handler = () => {
+    receivedSignal ??= signal
+    child.kill(signal)
+  }
+  signalHandlers.set(signal, handler)
+  process.on(signal, handler)
+}
+
+child.on('error', (error) => {
+  for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler)
+  console.error('Failed to start the HumanLayer CLI binary: ' + error.message)
+  process.exitCode = 1
+})
+
+child.on('exit', (code, signal) => {
+  for (const [registeredSignal, handler] of signalHandlers) process.removeListener(registeredSignal, handler)
+  const terminationSignal = signal ?? receivedSignal
+  if (terminationSignal) {
+    process.kill(process.pid, terminationSignal)
+    return
+  }
+  process.exitCode = code ?? 1
+})

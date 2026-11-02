@@ -32,7 +32,9 @@ The daemon lives only for the length of the job. It does not clone the repositor
 
 ### Tasks and sessions
 
-Every session belongs to a task. Automation runs reuse one task per automation, so each run adds a session under the same task in HumanLayer and you can read the automation's history in one place. `--ensure-task <slug>` creates the task on the first run and reuses it after that; `--use-task <id-or-slug>` requires a task that already exists.
+Every session belongs to a task. Automation runs reuse one task per automation, so each new run adds a session under the same task in HumanLayer and you can read the automation's history in one place. `--ensure-task <slug>` creates the task on the first run and reuses it after that; `--use-task <id-or-slug>` requires a task that already exists.
+
+For a retry-safe prepare request, pass both `--session-id <uuid>` and `--host-id <uuid>`. Reuse the same pair only for an exact retry of the same task and session input. The API returns the prior preparation for an exact replay and returns a conflict if the ID is reused with changed input. If both options are omitted, each invocation keeps the legacy behavior: a new session and fresh host ID. A supplied ID pair deduplicates preparation only; an external coordinator must still claim the work before starting a daemon so concurrent callers cannot run the same session twice.
 
 ## Create a personal access token
 
@@ -49,6 +51,20 @@ Store the token in your automation platform's secret store. Never commit it.
 
 Run the command from the directory the agent should work in. The coding agent also needs its provider credential in the environment — `ANTHROPIC_API_KEY` for the default Claude setup.
 
+For noninteractive callers that must keep the HumanLayer PAT out of process arguments, use `--pat-stdin` with a pipe or secret file:
+
+```bash
+humanlayer automation run \
+  --pat-stdin \
+  --ensure-task readme-greeter \
+  --task-name "README greeter" \
+  --session-name "Greeting run" \
+  --prompt-file automation/greeting.md \
+  < /run/secrets/humanlayer-pat
+```
+
+`--pat-stdin` reads one token through end-of-file, rejects empty input and interactive terminals, and cannot be combined with `--pat`. The existing `--pat <value>` option remains available for current callers.
+
 ```bash
 humanlayer automation run \
   --pat "${HUMANLAYER_PAT}" \
@@ -62,7 +78,8 @@ humanlayer automation run \
 - `--pat` authenticates the run.
 - `--ensure-task` plus `--task-name` create the task on the first run and reuse it on later runs.
 - `--session-name` labels this run's session. Include something unique such as a run ID or a date.
-- `--metadata-file` writes the prepared `taskId` and `sessionId` as JSON for later automation steps. Use those IDs to build canonical `/tasks/:taskId?deep=true` and `/sessions/:sessionId?deep=true` app links.
+- `--host-id` and `--session-id` let a caller reuse an exact prepared run after an uncertain response. Persist both IDs before the first call if the caller may need to retry; the metadata file is written only after the API returns.
+- `--metadata-file` writes the prepared `taskId`, `sessionId`, and `hostId` as JSON for later automation steps. Use the task and session IDs to build canonical `/tasks/:taskId?deep=true` and `/sessions/:sessionId?deep=true` app links.
 - `--prompt-file` reads the agent instructions from a file in the checkout. Use `--prompt` for short inline text.
 - `--shutdown-on` controls when the daemon exits. The default `inactivity` with `--inactivity 2m` keeps the daemon up until two minutes after the last activity, so you can send Cloud follow-ups; each interaction resets the timer. Use `--shutdown-on stop` to exit as soon as the session is ready for input.
 - `--provider`, `--model`, `--coding-agent`, and `--thinking` select the agent. The defaults use Claude through the Anthropic API.

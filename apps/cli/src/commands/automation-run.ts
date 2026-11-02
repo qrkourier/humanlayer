@@ -15,12 +15,25 @@ import {
 
 export type { AutomationRunCliOptions, AutomationRunOptions } from './AutomationRun'
 
+type AutomationPrepareTargetSession = {
+	hostId: string
+	sessionId?: string
+	sessionName: string
+	prompt: string
+	workingDirectory: string
+	codingAgent: AutomationRunOptions['codingAgent']
+	provider: AutomationRunOptions['provider']
+	model: string
+	effort?: string
+	permissionsMode: 'bypass'
+}
+
 export function buildAutomationPrepareInput(
 	options: AutomationRunOptions,
 	input: { readonly hostId: string; readonly prompt: string; readonly workingDirectory: string },
 ) {
-	const targetSession = {
-		hostId: input.hostId,
+	const targetSession: AutomationPrepareTargetSession = {
+		hostId: input.hostId.toLowerCase(),
 		sessionName: options.sessionName,
 		prompt: input.prompt,
 		workingDirectory: input.workingDirectory,
@@ -30,6 +43,7 @@ export function buildAutomationPrepareInput(
 		effort: options.thinking,
 		permissionsMode: 'bypass' as const,
 	}
+	if (options.sessionId !== undefined) targetSession.sessionId = options.sessionId.toLowerCase()
 	return options.ensureTask !== undefined
 		? {
 				taskMode: 'ensure' as const,
@@ -59,10 +73,26 @@ export async function loadAutomationPrompt(options: AutomationRunOptions, workin
 export async function writeAutomationMetadata(
 	metadataFile: string,
 	workingDirectory: string,
-	metadata: { readonly taskId: string; readonly sessionId: string },
+	metadata: { readonly taskId: string; readonly sessionId: string; readonly hostId: string },
 ): Promise<void> {
 	const metadataPath = isAbsolute(metadataFile) ? metadataFile : resolve(workingDirectory, metadataFile)
 	await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
+}
+
+async function readAutomationPatFromStdin(): Promise<string> {
+	if (process.stdin.isTTY === true) {
+		throw new Error('Cannot read a HumanLayer PAT from an interactive terminal; pipe it with --pat-stdin')
+	}
+
+	const chunks: string[] = []
+	for await (const chunk of process.stdin) {
+		chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+	}
+	const pat = chunks.join('').trim()
+	if (pat.length === 0 || /\s/.test(pat)) {
+		throw new Error('Expected one non-empty HumanLayer PAT on stdin')
+	}
+	return pat
 }
 
 export async function automationRunCommand(
@@ -74,16 +104,24 @@ export async function automationRunCommand(
 
 	const workingDirectory = process.cwd()
 	const prompt = await loadAutomationPrompt(options, workingDirectory)
+	const pat = options.pat ?? (await readAutomationPatFromStdin())
 
-	const hostId = crypto.randomUUID()
-	const client = createApiORPCClient(envConfig.apiOrigin, options.pat)
+	const hostId = (options.hostId ?? crypto.randomUUID()).toLowerCase()
+	const client = createApiORPCClient(envConfig.apiOrigin, pat)
 	const prepared = await client.automation.run.prepare(
 		buildAutomationPrepareInput(options, { hostId, prompt, workingDirectory }),
 	)
+	if (
+		prepared.hostId !== hostId ||
+		(options.sessionId !== undefined && prepared.sessionId !== options.sessionId.toLowerCase())
+	) {
+		throw new Error('Prepared automation identity does not match the requested host/session')
+	}
 	if (options.metadataFile !== undefined) {
 		await writeAutomationMetadata(options.metadataFile, workingDirectory, {
 			taskId: prepared.taskId,
 			sessionId: prepared.sessionId,
+			hostId: prepared.hostId,
 		})
 	}
 	const { token: launchToken } = await client.auth.daemon.launchToken.create({})
