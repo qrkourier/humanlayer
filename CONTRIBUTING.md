@@ -28,7 +28,9 @@ bun install
 cp .env.example .env
 ```
 
-Use `bun` for everything, never npm, pnpm, or yarn. Add a dependency to the package that needs it (`cd apps/riptide-ui && bun add ...`), not to the root.
+Use `bun` for dependency installation, development scripts, and tests. Do not use `npm`, `pnpm`, or `yarn` to manage monorepo dependencies. Add a dependency to the package that needs it (`cd apps/riptide-ui && bun add ...`), not to the root.
+
+The CLI's npm distribution-contract tests are a narrow exception: they may use `npm pack` and `npm install` only with locally generated tarballs. Disable lifecycle scripts for both commands, use `--offline` for install, and isolate the test HOME, npm cache, and install prefix. Use synthetic platform packages; do not contact the registry or publish from these tests.
 
 ## Checks
 
