@@ -6,6 +6,7 @@ import { CodingAgentSchema, PermissionsModeSchema } from '../sessions/launch'
 import { TaskWorkspaceAndWorkflowConfigurationSchema } from '../tasks/create'
 
 const AutomationTargetSessionSchema = z.object({
+	sessionId: z.uuid().optional(),
 	hostId: z.uuid(),
 	sessionName: z.string().trim().min(1),
 	prompt: z.string().min(1),
@@ -46,5 +47,9 @@ export const automationRunPrepareContract = contractBuilder
 		AUTOMATION_PREPARATION_BUSY: {
 			status: StatusCodes.SERVICE_UNAVAILABLE,
 			data: z.object({ retryAfterSeconds: z.literal(1) }),
+		},
+		AUTOMATION_PREPARATION_CONFLICT: {
+			status: StatusCodes.CONFLICT,
+			data: z.object({ message: z.string() }),
 		},
 	})

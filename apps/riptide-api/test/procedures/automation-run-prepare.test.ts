@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { automationRunPreparations } from '@humanlayer/db/tables/automation-run-preparations'
 import { conversationEvents } from '@humanlayer/db/tables/conversation-events'
 import { organizations } from '@humanlayer/db/tables/organizations'
 import { sessions } from '@humanlayer/db/tables/sessions'
@@ -50,12 +51,16 @@ describe('automation.run.prepare', () => {
 		await cleanup?.()
 	}, 30_000)
 
-	function context(actorUserId = userId) {
+	function context(
+		actorUserId = userId,
+		actorOrganizationId = organizationId,
+		workosOrganizationId = 'workos-automation-test',
+	) {
 		return createMockApiContext({
 			auth: createMockApiAuth({
 				userId: actorUserId,
-				organizationId,
-				workosOrganizationId: 'workos-automation-test',
+				organizationId: actorOrganizationId,
+				workosOrganizationId,
 			}),
 			services: { db, dbReadReplica: db },
 		})
@@ -93,6 +98,236 @@ describe('automation.run.prepare', () => {
 			worktree_timing: 'never',
 		})
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(2)
+	})
+
+	test('concurrent preparations with the same session ID return one session and initial event', async () => {
+		const slug = `idempotent-${randomUUID()}`
+		const sessionId = randomUUID()
+		const request = { ...ensureInput(slug, 'Idempotent run'), sessionId }
+		const [first, second] = await Promise.all([
+			call(automationRunPrepareProcedure, request, { context: context() }),
+			call(automationRunPrepareProcedure, request, { context: context() }),
+		])
+
+		expect(first.sessionId).toBe(sessionId)
+		expect(second).toEqual(first)
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('deleting a prepared session removes its replay record and permits exact re-prepare', async () => {
+		const request = {
+			...ensureInput(`delete-replay-${randomUUID()}`, 'Replay after session deletion'),
+			sessionId: randomUUID(),
+		}
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(1)
+
+		await db.delete(sessions).where(eq(sessions.id, first.sessionId))
+
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(0)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(0)
+
+		const replay = await call(automationRunPrepareProcedure, request, { context: context() })
+		expect(replay).toEqual(first)
+		expect(await db.select().from(sessions).where(eq(sessions.id, first.sessionId))).toHaveLength(1)
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('deleting an organization cascades its prepared session and replay record', async () => {
+		const workosOrganizationId = `workos-delete-${randomUUID()}`
+		const [organization] = await db
+			.insert(organizations)
+			.values({ name: 'Automation deletion test', workos_organization_id: workosOrganizationId })
+			.returning()
+		if (!organization) throw new Error('Failed to create deletion test organization')
+
+		const request = {
+			...ensureInput(`organization-delete-${randomUUID()}`, 'Organization deletion'),
+			sessionId: randomUUID(),
+		}
+		const first = await call(automationRunPrepareProcedure, request, {
+			context: context(userId, organization.id, workosOrganizationId),
+		})
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(1)
+
+		await db.delete(organizations).where(eq(organizations.id, organization.id))
+
+		expect(await db.select().from(sessions).where(eq(sessions.id, first.sessionId))).toHaveLength(0)
+		expect(
+			await db
+				.select()
+				.from(automationRunPreparations)
+				.where(eq(automationRunPreparations.session_id, first.sessionId)),
+		).toHaveLength(0)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(0)
+	})
+
+	test('concurrent use preparations with one session ID reject a changed payload', async () => {
+		const task = await call(
+			automationRunPrepareProcedure,
+			ensureInput(`concurrent-conflict-${randomUUID()}`, 'Shared task'),
+			{ context: context() },
+		)
+		const sessionId = randomUUID()
+		const request = {
+			taskMode: 'use' as const,
+			taskIdOrSlug: task.taskId,
+			sessionId,
+			hostId: randomUUID(),
+			sessionName: 'Concurrent run',
+			prompt: 'First payload',
+			workingDirectory: '/checkout',
+			codingAgent: 'codelayer' as const,
+			provider: 'anthropic',
+			model: 'opus',
+			permissionsMode: 'bypass' as const,
+		}
+
+		const results = await Promise.allSettled([
+			call(automationRunPrepareProcedure, request, { context: context() }),
+			call(automationRunPrepareProcedure, { ...request, prompt: 'Conflicting payload' }, { context: context() }),
+		])
+		const success = results.find((result) => result.status === 'fulfilled')
+		const conflict = results.find((result) => result.status === 'rejected')
+		expect(success?.status).toBe('fulfilled')
+		expect(conflict?.status).toBe('rejected')
+		if (success?.status !== 'fulfilled' || conflict?.status !== 'rejected') {
+			throw new Error('Expected one prepared receipt and one conflicting replay')
+		}
+		expect(conflict.reason).toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+		expect(success.value.taskId).toBe(task.taskId)
+		expect(success.value.sessionId).toBe(sessionId)
+		expect(await db.select().from(sessions).where(eq(sessions.id, sessionId))).toHaveLength(1)
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, task.taskId))).toHaveLength(2)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('reusing a session ID with changed input conflicts without creating another event', async () => {
+		const request = { ...ensureInput(`changed-${randomUUID()}`, 'Original run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+
+		await expect(
+			call(automationRunPrepareProcedure, { ...request, prompt: 'Changed prompt' }, { context: context() }),
+		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('reusing a session ID conflicts when immutable preparation fields change', async () => {
+		const request = { ...ensureInput(`changed-fields-${randomUUID()}`, 'Original run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+		const changedRequests = [
+			['host ID', { ...request, hostId: randomUUID() }],
+			['task selector', { ...request, slug: `${request.slug}-changed` }],
+			['task configuration', { ...request, task: { ...request.task, name: 'Changed task' } }],
+			['session name', { ...request, sessionName: 'Changed session' }],
+			['working directory', { ...request, workingDirectory: '/different-checkout' }],
+			['model', { ...request, model: 'sonnet' }],
+			['permissions', { ...request, permissionsMode: 'accept_edits' as const }],
+		] as const
+
+		for (const [field, changed] of changedRequests) {
+			await expect(
+				call(automationRunPrepareProcedure, changed, { context: context() }),
+				`changed ${field}`,
+			).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+		}
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('reusing a session ID from another actor does not reveal the prior receipt', async () => {
+		const request = { ...ensureInput(`actor-${randomUUID()}`, 'Actor-scoped run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+
+		await expect(
+			call(automationRunPrepareProcedure, request, { context: context('other-user') }),
+		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+	})
+
+	test('concurrent actors cannot recover the same session receipt', async () => {
+		const sessionId = randomUUID()
+		const request = { ...ensureInput(`actor-race-${randomUUID()}`, 'Actor race'), sessionId }
+		const results = await Promise.allSettled([
+			call(automationRunPrepareProcedure, request, { context: context() }),
+			call(automationRunPrepareProcedure, request, { context: context('other-user') }),
+		])
+		const success = results.find((result) => result.status === 'fulfilled')
+		const conflict = results.find((result) => result.status === 'rejected')
+
+		expect(success?.status).toBe('fulfilled')
+		expect(conflict?.status).toBe('rejected')
+		if (success?.status !== 'fulfilled' || conflict?.status !== 'rejected') {
+			throw new Error('Expected one actor to prepare and the other to receive a conflict')
+		}
+		expect(conflict.reason).toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+		expect(success.value.sessionId).toBe(sessionId)
+		expect(await db.select().from(sessions).where(eq(sessions.id, sessionId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, sessionId)),
+		).toHaveLength(1)
+	})
+
+	test('reusing a session ID from another organization does not reveal the prior receipt', async () => {
+		const request = { ...ensureInput(`cross-org-${randomUUID()}`, 'Tenant-scoped run'), sessionId: randomUUID() }
+		const first = await call(automationRunPrepareProcedure, request, { context: context() })
+		const [otherOrganization] = await db
+			.insert(organizations)
+			.values({ name: 'Other automation test', workos_organization_id: `workos-${randomUUID()}` })
+			.returning()
+		if (!otherOrganization) throw new Error('Failed to create other test organization')
+
+		await expect(
+			call(automationRunPrepareProcedure, request, {
+				context: context(userId, otherOrganization.id, otherOrganization.workos_organization_id),
+			}),
+		).rejects.toMatchObject({ code: 'AUTOMATION_PREPARATION_CONFLICT' })
+
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(1)
+		expect(
+			await db.select().from(conversationEvents).where(eq(conversationEvents.session_id, first.sessionId)),
+		).toHaveLength(1)
 	})
 
 	test('creates the initial event atomically', async () => {

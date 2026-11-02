@@ -1,4 +1,8 @@
+import { createHash } from 'node:crypto'
+
 import { isEffortSupported, isFastModeSupported } from '@humanlayer/ai/config'
+import { automationRunPreparations } from '@humanlayer/db/tables/automation-run-preparations'
+import { sessions } from '@humanlayer/db/tables/sessions'
 import { tasks } from '@humanlayer/db/tables/tasks'
 import { and, eq, or, sql } from 'drizzle-orm'
 import { Effect } from 'effect'
@@ -19,6 +23,28 @@ import { effectOrpcBaseOrganizationRequired, requiresBillingEffectMiddleware } f
 
 const AUTOMATION_PREPARATION_LOCK_WAIT_MS = 5_000
 
+function canonicalJson(value: unknown): string {
+	if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+
+	const record = value as Record<string, unknown>
+	const entries = Object.keys(record)
+		.filter((key) => record[key] !== undefined)
+		.sort()
+		.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+	return `{${entries.join(',')}}`
+}
+
+function automationPreparationFingerprint(input: {
+	readonly organizationId: string
+	readonly userId: string
+	readonly request: unknown
+}): string {
+	return createHash('sha256')
+		.update(canonicalJson({ organizationId: input.organizationId, userId: input.userId, request: input.request }))
+		.digest('hex')
+}
+
 export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.automation.run.prepare
 	.use(requiresBillingEffectMiddleware)
 	.effect(function* ({ input, context, errors }) {
@@ -36,6 +62,9 @@ export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.
 		const postgres = yield* PostgresDb
 		const { organizationId, userId } = context.auth
 		const now = BigInt(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
+		const requestFingerprint = input.sessionId
+			? automationPreparationFingerprint({ organizationId, userId, request: input })
+			: undefined
 		const mapPreparationError = (error: PostgresDbError) => {
 			if (error.kind === 'timeout') {
 				return Effect.fail(errors.AUTOMATION_PREPARATION_BUSY({ data: { retryAfterSeconds: 1 } }))
@@ -46,6 +75,84 @@ export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.
 		const prepared = yield* postgres
 			.transaction((tx) =>
 				Effect.gen(function* () {
+					if (input.sessionId && requestFingerprint) {
+						yield* tx.query(
+							tx.client.execute(
+								sql`SELECT set_config('lock_timeout', ${`${AUTOMATION_PREPARATION_LOCK_WAIT_MS}ms`}, true)`,
+							),
+						)
+						yield* tx.query(
+							tx.client.execute(
+								sql`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-session:${input.sessionId}`}, 0::bigint))`,
+							),
+						)
+
+						const [preparation] = yield* tx.query(
+							tx.client
+								.select()
+								.from(automationRunPreparations)
+								.where(eq(automationRunPreparations.session_id, input.sessionId))
+								.limit(1),
+						)
+						if (preparation) {
+							if (
+								preparation.organization_id !== organizationId ||
+								preparation.created_by !== userId ||
+								preparation.request_fingerprint !== requestFingerprint
+							) {
+								return yield* Effect.fail(
+									errors.AUTOMATION_PREPARATION_CONFLICT({
+										data: { message: 'Session ID is already bound to a different preparation' },
+									}),
+								)
+							}
+
+							const [session] = yield* tx.query(
+								tx.client.select().from(sessions).where(eq(sessions.id, input.sessionId)).limit(1),
+							)
+							const taskId = session?.task_id
+							if (!session || !taskId) {
+								return yield* Effect.fail(
+									errors.AUTOMATION_PREPARATION_CONFLICT({
+										data: { message: 'Prepared session is no longer available' },
+									}),
+								)
+							}
+
+							const authorized = yield* tx.run(() =>
+								getTaskWithEffectivePermissions(tx.client, taskId, userId, organizationId),
+							)
+							if (!authorized) {
+								return yield* Effect.fail(errors.NOT_FOUND({ data: { message: 'Task not found' } }))
+							}
+							if (authorized.effectivePermission !== 'edit') {
+								return yield* Effect.fail(
+									errors.FORBIDDEN({ data: { message: 'Write permission required on task' } }),
+								)
+							}
+							return {
+								taskId,
+								sessionId: session.id,
+								hostId: session.host_id,
+							}
+						}
+
+						const [sessionCollision] = yield* tx.query(
+							tx.client
+								.select({ id: sessions.id })
+								.from(sessions)
+								.where(eq(sessions.id, input.sessionId))
+								.limit(1),
+						)
+						if (sessionCollision) {
+							return yield* Effect.fail(
+								errors.AUTOMATION_PREPARATION_CONFLICT({
+									data: { message: 'Session ID is already bound to a different preparation' },
+								}),
+							)
+						}
+					}
+
 					let task: typeof tasks.$inferSelect
 
 					if (input.taskMode === 'ensure') {
@@ -156,6 +263,7 @@ export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.
 
 					const session = yield* tx.run(() =>
 						createSessionForLaunch(tx.client, {
+							id: input.sessionId,
 							taskId: task.id,
 							organizationId,
 							resourceOwnerUserId: task.resource_owner_user_id,
@@ -172,6 +280,16 @@ export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.
 							permissionsMode: input.permissionsMode,
 						}),
 					)
+					if (input.sessionId && requestFingerprint) {
+						yield* tx.query(
+							tx.client.insert(automationRunPreparations).values({
+								session_id: session.id,
+								organization_id: organizationId,
+								created_by: userId,
+								request_fingerprint: requestFingerprint,
+							}),
+						)
+					}
 					return { taskId: task.id, sessionId: session.id }
 				}),
 			)

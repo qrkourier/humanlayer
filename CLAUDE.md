@@ -159,7 +159,8 @@ If you are working in `.humanlayer/tasks`, you MUST use `Bash(ls ...)` to explor
 ## Contributing
 
 * This is a turborepo monorepo! Dependencies should only be installed into the package that it is needed in (e.g. `apps/riptide-ui`, `contracts/cloud-contract`, etc. - `cd apps/riptide-ui && bun install ...`)
-* `bun` should be used in all cases instead of `npm`, `yarn` or `pnpm`
+* Use `bun` for dependency installation, development scripts, and tests. Do not use `npm`, `yarn`, or `pnpm` to manage monorepo dependencies.
+* Narrow exception: CLI distribution-contract tests may use `npm pack` and `npm install` only with locally generated tarballs. Disable lifecycle scripts for both commands, use `--offline` for install, and isolate the test HOME, npm cache, and install prefix. Use synthetic platform packages; do not contact the registry or publish from these tests.
 
 ## Linear
 Use the Linear CLI for:

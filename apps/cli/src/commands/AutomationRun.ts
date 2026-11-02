@@ -14,6 +14,7 @@ function durationMultiplier(unit: string): number {
 }
 
 const RequiredOption = Schema.String.check(Schema.isPattern(/\S/, { error: { message: REQUIRED_OPTION_MESSAGE } }))
+const UuidOption = Schema.String.pipe(Schema.check(Schema.isUUID()))
 
 export const AutomationPromptText = Schema.String.check(
 	Schema.isMinLength(1, { error: { message: 'Expected a non-empty initial prompt' } }),
@@ -51,12 +52,16 @@ export const AutomationInactivityMilliseconds = Schema.String.pipe(
 export type AutomationInactivityMilliseconds = typeof AutomationInactivityMilliseconds.Type
 
 const commonFields = {
-	pat: RequiredOption,
+	pat: Schema.optionalKey(RequiredOption),
+	patStdin: Schema.optionalKey(Schema.Boolean),
+	hostId: Schema.optionalKey(UuidOption),
+	sessionId: Schema.optionalKey(UuidOption),
 	sessionName: RequiredOption,
 	codingAgent: Schema.Literals(['claude', 'codelayer']),
 	provider: Schema.Literals(['anthropic', 'openai', 'codex', 'copilot', 'firepass']),
 	model: Schema.optionalKey(RequiredOption),
 	thinking: Schema.optionalKey(Schema.Literals(['low', 'medium', 'high', 'xhigh', 'max'])),
+	permissionsMode: Schema.optionalKey(Schema.Literals(['default', 'accept_edits', 'auto', 'bypass'])),
 	metadataFile: Schema.optionalKey(RequiredOption),
 	shutdownOn: Schema.Literals(['inactivity', 'stop']),
 	inactivity: AutomationInactivityMilliseconds,
@@ -85,7 +90,7 @@ const PromptFile = {
 	promptFile: RequiredOption,
 }
 
-export const AutomationRunOptions = Schema.Union(
+const AutomationRunOptionsBase = Schema.Union(
 	[
 		Schema.Struct({ ...commonFields, ...EnsureTask, ...InlinePrompt }),
 		Schema.Struct({ ...commonFields, ...EnsureTask, ...PromptFile }),
@@ -93,6 +98,16 @@ export const AutomationRunOptions = Schema.Union(
 		Schema.Struct({ ...commonFields, ...UseTask, ...PromptFile }),
 	],
 	{ mode: 'oneOf' },
+)
+
+export const AutomationRunOptions = AutomationRunOptionsBase.check(
+	Schema.makeFilter((options) => (options.hostId === undefined) === (options.sessionId === undefined), {
+		error: { message: 'hostId and sessionId must be provided together for an idempotent retry' },
+	}),
+).check(
+	Schema.makeFilter((options) => (options.pat !== undefined) !== (options.patStdin === true), {
+		error: { message: 'provide exactly one of --pat or --pat-stdin' },
+	}),
 )
 export type AutomationRunOptions = typeof AutomationRunOptions.Type
 
